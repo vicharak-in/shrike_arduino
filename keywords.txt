@@ -1,0 +1,18 @@
+#######################################
+# Syntax Coloring Map for ShrikeFlash
+#######################################
+
+#######################################
+# Datatypes (CLASS, STRUCT, ENUM)
+#######################################
+ShrikeFlash    KEYWORD1
+
+#######################################
+# Methods and Functions
+#######################################
+begin          KEYWORD2
+flash          KEYWORD2
+reset          KEYWORD2
+listFiles      KEYWORD2
+printStats     KEYWORD2
+
