@@ -2,13 +2,16 @@
  * ShrikeFlash.cpp
  * Implementation file for ShrikeFlash library
  */
-
 #include "Shrike.h"
 
 // Constructor
-ShrikeFlash::ShrikeFlash(uint8_t en_pin, uint8_t pwr_pin, 
-                         uint8_t ss_pin, uint8_t sck_pin, 
-                         uint8_t mosi_pin, uint8_t miso_pin) {
+ShrikeFlash::ShrikeFlash(uint8_t en_pin, uint8_t pwr_pin,
+                         uint8_t ss_pin, uint8_t sck_pin,
+                         uint8_t mosi_pin, uint8_t miso_pin)
+#if defined(ARDUINO_ARCH_ESP32)
+  : _hspi(HSPI)
+#endif
+{
   _en_pin = en_pin;
   _pwr_pin = pwr_pin;
   _ss_pin = ss_pin;
@@ -28,23 +31,29 @@ bool ShrikeFlash::begin(uint32_t spi_speed) {
   pinMode(_en_pin, OUTPUT);
   pinMode(_pwr_pin, OUTPUT);
   pinMode(_ss_pin, OUTPUT);
-
   digitalWrite(_ss_pin, HIGH);
   digitalWrite(_en_pin, LOW);
   digitalWrite(_pwr_pin, LOW);
 
-  // Initialize SPI with custom pins
+  // SPI pin init — arch-specific
+#if defined(ARDUINO_ARCH_RP2040)
   SPI.setSCK(_sck_pin);
   SPI.setTX(_mosi_pin);
   SPI.setRX(_miso_pin);
   SPI.setCS(_ss_pin);
   SPI.begin();
+#elif defined(ARDUINO_ARCH_ESP32)
+  _hspi.begin(_sck_pin, _miso_pin, _mosi_pin, _ss_pin);
+#endif
 
-  // Create SPI settings
   _spi_settings = new SPISettings(_spi_speed, MSBFIRST, SPI_MODE0);
 
-  // Initialize LittleFS
+  // LittleFS init — arch-specific
+#if defined(ARDUINO_ARCH_RP2040)
   if (!LittleFS.begin()) {
+#elif defined(ARDUINO_ARCH_ESP32)
+  if (!LittleFS.begin(true)) {
+#endif
     Serial.println("[ShrikeFlash] ERROR: LittleFS mount failed!");
     return false;
   }
@@ -56,7 +65,6 @@ bool ShrikeFlash::begin(uint32_t spi_speed) {
 // Flash FPGA
 bool ShrikeFlash::flash(const char* filename, uint32_t word_size) {
   reset();
-
   Serial.println("[ShrikeFlash] Starting FPGA flash...");
   Serial.print("[ShrikeFlash] Flashing: ");
   Serial.println(filename);
@@ -78,21 +86,27 @@ bool ShrikeFlash::flash(const char* filename, uint32_t word_size) {
   Serial.println(" bytes");
 
   delay(500);
-
   digitalWrite(_ss_pin, HIGH);
   delayMicroseconds(2000);
   digitalWrite(_ss_pin, LOW);
 
+#if defined(ARDUINO_ARCH_RP2040)
   SPI.beginTransaction(*_spi_settings);
+#elif defined(ARDUINO_ARCH_ESP32)
+  _hspi.beginTransaction(*_spi_settings);
+#endif
 
   unsigned long startTime = millis();
-
   uint8_t* buffer = new uint8_t[word_size];
   size_t bytesRead;
   size_t totalSent = 0;
 
   while ((bytesRead = file.read(buffer, word_size)) > 0) {
+#if defined(ARDUINO_ARCH_RP2040)
     SPI.transfer(buffer, bytesRead);
+#elif defined(ARDUINO_ARCH_ESP32)
+    _hspi.transfer(buffer, bytesRead);
+#endif
     totalSent += bytesRead;
   }
 
@@ -100,11 +114,15 @@ bool ShrikeFlash::flash(const char* filename, uint32_t word_size) {
   _transfer_rate = (_last_flash_time > 0) ? (totalSent * 1000.0 / _last_flash_time / 1024.0) : 0;
 
   delete[] buffer;
+
+#if defined(ARDUINO_ARCH_RP2040)
   SPI.endTransaction();
+#elif defined(ARDUINO_ARCH_ESP32)
+  _hspi.endTransaction();
+#endif
+
   digitalWrite(_ss_pin, HIGH);
-
   file.close();
-
   delay(100);
 
   Serial.println("[ShrikeFlash] FPGA programming done.");
@@ -113,7 +131,6 @@ bool ShrikeFlash::flash(const char* filename, uint32_t word_size) {
   Serial.print(" ms, Rate: ");
   Serial.print(_transfer_rate, 2);
   Serial.println(" KB/s");
-
   return true;
 }
 
@@ -154,13 +171,9 @@ bool ShrikeFlash::fileExists(const char* filename) {
 }
 
 size_t ShrikeFlash::getFileSize(const char* filename) {
-  if (!LittleFS.exists(filename)) {
-    return 0;
-  }
+  if (!LittleFS.exists(filename)) return 0;
   File file = LittleFS.open(filename, "r");
-  if (!file) {
-    return 0;
-  }
+  if (!file) return 0;
   size_t size = file.size();
   file.close();
   return size;
@@ -168,12 +181,17 @@ size_t ShrikeFlash::getFileSize(const char* filename) {
 
 void ShrikeFlash::listFiles() {
   Serial.println("\n[ShrikeFlash] === Files in LittleFS ===");
+
+#if defined(ARDUINO_ARCH_RP2040)
   File root = LittleFS.open("/", "r");
-  if (!root) {
+#elif defined(ARDUINO_ARCH_ESP32)
+  File root = LittleFS.open("/");
+#endif
+
+  if (!root || !root.isDirectory()) {
     Serial.println("[ShrikeFlash] ERROR: Failed to open root directory");
     return;
   }
-
   File file = root.openNextFile();
   int count = 0;
   while (file) {
@@ -187,10 +205,7 @@ void ShrikeFlash::listFiles() {
     count++;
   }
   root.close();
-
-  if (count == 0) {
-    Serial.println("  (No files found)");
-  }
+  if (count == 0) Serial.println("  (No files found)");
   Serial.println("===========================\n");
 }
 
@@ -200,32 +215,31 @@ bool ShrikeFlash::deleteFile(const char* filename) {
     Serial.println(filename);
     return false;
   }
-
   if (LittleFS.remove(filename)) {
     Serial.print("[ShrikeFlash] File deleted: ");
     Serial.println(filename);
     return true;
-  } else {
-    Serial.print("[ShrikeFlash] ERROR: Failed to delete: ");
-    Serial.println(filename);
-    return false;
   }
+  Serial.print("[ShrikeFlash] ERROR: Failed to delete: ");
+  Serial.println(filename);
+  return false;
 }
 
 void ShrikeFlash::printFSInfo() {
   Serial.println("\n[ShrikeFlash] === Filesystem Info ===");
 
+#if defined(ARDUINO_ARCH_RP2040)
   FSInfo fs_info;
   LittleFS.info(fs_info);
+  size_t total = fs_info.totalBytes;
+  size_t used  = fs_info.usedBytes;
+#elif defined(ARDUINO_ARCH_ESP32)
+  size_t total = LittleFS.totalBytes();
+  size_t used  = LittleFS.usedBytes();
+#endif
 
-  Serial.print("Total space: ");
-  Serial.print(fs_info.totalBytes / 1024);
-  Serial.println(" KB");
-  Serial.print("Used space: ");
-  Serial.print(fs_info.usedBytes / 1024);
-  Serial.println(" KB");
-  Serial.print("Free space: ");
-  Serial.print((fs_info.totalBytes - fs_info.usedBytes) / 1024);
-  Serial.println(" KB");
+  Serial.print("Total space: "); Serial.print(total / 1024); Serial.println(" KB");
+  Serial.print("Used space: ");  Serial.print(used  / 1024); Serial.println(" KB");
+  Serial.print("Free space: ");  Serial.print((total - used) / 1024); Serial.println(" KB");
   Serial.println("===========================\n");
 }

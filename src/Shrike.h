@@ -1,19 +1,38 @@
 /*
  * ShrikeFlash.h
- * 
+ *
  * Usage:
  *   #include "ShrikeFlash.h"
  *   ShrikeFlash fpga;
  *   fpga.begin();
  *   fpga.flash("/led_blink.bin");
  */
-
 #ifndef SHRIKE_FLASH_H
 #define SHRIKE_FLASH_H
 
 #include <Arduino.h>
 #include <SPI.h>
 #include <LittleFS.h>
+
+// ── Default pin assignments ──────────────────────────────────────────────────
+#if defined(ARDUINO_ARCH_RP2040)
+  #define SHRIKE_DEFAULT_EN_PIN    13
+  #define SHRIKE_DEFAULT_PWR_PIN   12
+  #define SHRIKE_DEFAULT_SS_PIN     1
+  #define SHRIKE_DEFAULT_SCK_PIN    2
+  #define SHRIKE_DEFAULT_MOSI_PIN   3
+  #define SHRIKE_DEFAULT_MISO_PIN   0
+#elif defined(ARDUINO_ARCH_ESP32)
+  #define SHRIKE_DEFAULT_EN_PIN     9
+  #define SHRIKE_DEFAULT_PWR_PIN    8
+  #define SHRIKE_DEFAULT_SS_PIN    10
+  #define SHRIKE_DEFAULT_SCK_PIN   12
+  #define SHRIKE_DEFAULT_MOSI_PIN  11
+  #define SHRIKE_DEFAULT_MISO_PIN  13
+#else
+  #error "Unsupported architecture. Only RP2040 and ESP32 are supported."
+#endif
+// ─────────────────────────────────────────────────────────────────────────────
 
 class ShrikeFlash {
 private:
@@ -28,11 +47,18 @@ private:
   unsigned long _last_flash_time;
   float _transfer_rate;
 
+#if defined(ARDUINO_ARCH_ESP32)
+  SPIClass _hspi;
+#endif
+
 public:
-  // Constructor with default pins
-  ShrikeFlash(uint8_t en_pin = 13, uint8_t pwr_pin = 12, 
-              uint8_t ss_pin = 1, uint8_t sck_pin = 2, 
-              uint8_t mosi_pin = 3, uint8_t miso_pin = 0);
+  // Constructor — defaults are arch-specific (see macros above)
+  ShrikeFlash(uint8_t en_pin   = SHRIKE_DEFAULT_EN_PIN,
+              uint8_t pwr_pin  = SHRIKE_DEFAULT_PWR_PIN,
+              uint8_t ss_pin   = SHRIKE_DEFAULT_SS_PIN,
+              uint8_t sck_pin  = SHRIKE_DEFAULT_SCK_PIN,
+              uint8_t mosi_pin = SHRIKE_DEFAULT_MOSI_PIN,
+              uint8_t miso_pin = SHRIKE_DEFAULT_MISO_PIN);
 
   // Initialize the library (call in setup())
   bool begin(uint32_t spi_speed = 1600000);
